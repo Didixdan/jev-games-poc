@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en" class="bg-gray-950 text-gray-100">
+<head>
+  <meta charset="UTF-8" />
+  <title>Snake × JEV</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .cell { width: 22px; height: 22px; }
+    .prob-bar { transition: width 0.3s ease; }
+    #history { scrollbar-width: thin; scrollbar-color: #374151 transparent; }
+  </style>
+</head>
+<body class="min-h-screen flex items-start justify-center gap-6 p-6">
+
+  <!-- LEFT: Game -->
+  <div class="flex flex-col gap-4">
+    <div class="flex items-center justify-between">
+      <h1 class="text-xl font-bold tracking-tight">Snake <span class="text-green-400">×</span> JEV</h1>
+      <div class="flex items-center gap-3 text-sm">
+        <span class="text-gray-400">Score:</span>
+        <span id="score" class="font-mono font-bold text-green-400">0</span>
+      </div>
+    </div>
+
+    <div id="grid" class="border border-gray-800 rounded-lg overflow-hidden" style="display:grid"></div>
+
+    <!-- Controls -->
+    <div class="flex flex-col gap-2 text-sm">
+      <div class="flex items-center gap-3">
+        <label class="text-gray-400 w-16">Speed</label>
+        <input id="speed" type="range" min="100" max="2000" value="800" step="100" class="flex-1 accent-green-400" />
+        <span id="speedLabel" class="font-mono text-green-400 w-16 text-right">800ms</span>
+      </div>
+      <div class="flex gap-2">
+        <button id="startBtn" class="px-4 py-1.5 bg-green-600 hover:bg-green-500 rounded text-sm font-medium transition-colors">Start</button>
+        <button id="resetBtn" class="px-4 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-sm font-medium transition-colors">Reset</button>
+      </div>
+    </div>
+
+    <!-- Game Over overlay -->
+    <div id="gameOver" class="hidden absolute inset-0 bg-black/70 flex flex-col items-center justify-center gap-4 rounded-lg z-10">
+      <p class="text-3xl font-bold text-red-400">Game Over</p>
+      <p id="finalScore" class="text-gray-300 text-lg"></p>
+      <div class="flex gap-3">
+        <button onclick="resetGame()" class="px-6 py-2 bg-green-600 hover:bg-green-500 rounded font-medium transition-colors">Play Again</button>
+        <button id="copyPromptBtn" onclick="copyLastPrompt()" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded font-medium transition-colors text-sm">Copy last prompt</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: JEV Panel -->
+  <div class="w-72 flex flex-col gap-4 text-sm">
+    <div class="bg-gray-900 rounded-xl border border-gray-800 p-4">
+      <div class="flex items-center justify-between mb-3">
+        <span class="text-gray-400 text-xs uppercase tracking-widest font-medium">JEV Answer</span>
+        <span id="latency" class="text-xs text-gray-500 font-mono">—</span>
+      </div>
+
+      <!-- Chosen move badge -->
+      <div class="flex items-center gap-2 mb-4">
+        <span class="text-gray-400 text-xs">Move:</span>
+        <span id="chosenMove" class="px-3 py-0.5 rounded-full bg-green-900 text-green-300 font-mono font-bold text-sm">—</span>
+      </div>
+
+      <!-- Probability bars -->
+      <div class="flex flex-col gap-2 mb-4" id="probBars">
+        <!-- injected by JS -->
+      </div>
+
+      <!-- Confidence gauge -->
+      <div class="flex flex-col gap-1">
+        <div class="flex justify-between text-xs text-gray-400">
+          <span>Confidence</span>
+          <span id="confValue" class="font-mono text-white">—</span>
+        </div>
+        <div class="h-2 bg-gray-800 rounded-full overflow-hidden">
+          <div id="confBar" class="h-full bg-indigo-500 prob-bar rounded-full" style="width:0%"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- State preview -->
+    <div class="bg-gray-900 rounded-xl border border-gray-800 p-4">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-gray-400 text-xs uppercase tracking-widest font-medium">State sent to JEV</span>
+        <button id="copyCurrentBtn" onclick="copyCurrentPrompt()" class="px-2 py-0.5 text-xs bg-gray-700 hover:bg-gray-600 rounded transition-colors font-mono">Copy</button>
+      </div>
+      <pre id="statePreview" class="text-xs text-gray-500 font-mono whitespace-pre overflow-hidden" style="max-height:120px">—</pre>
+    </div>
+
+    <!-- History -->
+    <div class="bg-gray-900 rounded-xl border border-gray-800 p-4 flex flex-col">
+      <span class="text-gray-400 text-xs uppercase tracking-widest font-medium block mb-3">History</span>
+      <div id="history" class="flex flex-col gap-1 overflow-y-auto" style="max-height:200px"></div>
+    </div>
+  </div>
+
+<script>
+const ROWS = 16, COLS = 21;
+const DIRECTIONS = { up: [-1,0], down: [1,0], left: [0,-1], right: [0,1] };
+const DIR_ICONS = { up: '↑', down: '↓', left: '←', right: '→' };
+const MOVE_COLORS = { up: 'bg-blue-800 text-blue-200', down: 'bg-purple-800 text-purple-200', left: 'bg-orange-800 text-orange-200', right: 'bg-cyan-800 text-cyan-200' };
+
+let grid, snake, score, gameOver, intervalId, running, lastFullPrompt = "";
+
+function initGrid() {
+  grid = Array.from({ length: ROWS }, () => Array(COLS).fill("S"));
+  const midR = Math.floor(ROWS / 2), midC = Math.floor(COLS / 2);
+  snake = [[midR, midC], [midR, midC+1], [midR, midC+2]];
+  redrawSnake();
+  for (let i = 0; i < 4; i++) placeRandom("E");
+  placeRandom("A");
+  score = 0;
+  gameOver = false;
+}
+
+function redrawSnake() {
+  snake.forEach(([r,c], i) => { grid[r][c] = i === 0 ? "1" : String(i + 1); });
+}
+
+function placeRandom(value) {
+  let r, c;
+  do { r = Math.floor(Math.random()*ROWS); c = Math.floor(Math.random()*COLS); }
+  while (grid[r][c] !== "S");
+  grid[r][c] = value;
+}
+
+function buildGridEl() {
+  const el = document.getElementById("grid");
+  el.style.gridTemplateColumns = `repeat(${COLS}, 22px)`;
+  el.innerHTML = "";
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const cell = document.createElement("div");
+      cell.className = "cell";
+      cell.id = `c${r}_${c}`;
+      el.appendChild(cell);
+    }
+  }
+}
+
+function cellColor(val) {
+  if (val === "S") return "bg-gray-900";
+  if (val === "1") return "bg-green-300";
+  if (val === "A") return "bg-red-500";
+  if (val === "E") return "bg-yellow-500";
+  // body segments: gradient from green-500 (near head) to green-950 (tail)
+  const idx = parseInt(val) - 2;
+  const stops = ["bg-green-500","bg-green-600","bg-green-700","bg-green-800","bg-green-900","bg-green-950"];
+  return stops[Math.min(idx, stops.length - 1)];
+}
+
+function renderGrid() {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const el = document.getElementById(`c${r}_${c}`);
+      const val = grid[r][c];
+      el.className = `cell ${cellColor(val)}${val === "1" ? " rounded-sm" : ""}`;
+    }
+  }
+  document.getElementById("score").textContent = score;
+}
+
+function getValidMoves() {
+  const [hr, hc] = snake[0];
+  return Object.entries(DIRECTIONS)
+    .filter(([, [dr, dc]]) => {
+      const nr = hr+dr, nc = hc+dc;
+      if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) return false;
+      const v = grid[nr][nc];
+      return v === "S" || v === "A"; // only free or apple
+    })
+    .map(([dir]) => dir);
+}
+
+function applyMove(dir) {
+  const [dr, dc] = DIRECTIONS[dir];
+  const [hr, hc] = snake[0];
+  const nr = hr+dr, nc = hc+dc;
+
+  if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS || grid[nr][nc] === "E") {
+    endGame(); return;
+  }
+  const grow = grid[nr][nc] === "A";
+  // clear tail before moving (unless growing)
+  if (!grow) {
+    const [tr, tc] = snake.pop();
+    grid[tr][tc] = "S";
+  }
+  snake.unshift([nr, nc]);
+  redrawSnake();
+  if (grow) { score++; placeRandom("A"); }
+}
+
+function endGame() {
+  gameOver = true;
+  clearInterval(intervalId);
+  running = false;
+  document.getElementById("gameOver").classList.remove("hidden");
+  document.getElementById("finalScore").textContent = `Score: ${score}`;
+}
+
+function updateJevPanel(result) {
+  document.getElementById("latency").textContent = result.latency + "ms";
+  const chosenEl = document.getElementById("chosenMove");
+  chosenEl.textContent = DIR_ICONS[result.move] + " " + result.move;
+  chosenEl.className = `px-3 py-0.5 rounded-full font-mono font-bold text-sm ${MOVE_COLORS[result.move] || 'bg-gray-700 text-gray-200'}`;
+
+  // probabilities
+  const probs = result.probabilities;
+  const sorted = Object.entries(probs).sort((a,b) => b[1]-a[1]);
+  const barsEl = document.getElementById("probBars");
+  barsEl.innerHTML = sorted.map(([dir, pct]) => {
+    const pctStr = (pct*100).toFixed(1);
+    const isChosen = dir === result.move;
+    return `<div class="flex items-center gap-2">
+      <span class="w-12 font-mono text-xs ${isChosen ? 'text-green-400 font-bold' : 'text-gray-400'}">${DIR_ICONS[dir]} ${dir}</span>
+      <div class="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
+        <div class="h-full prob-bar rounded-full ${isChosen ? 'bg-green-500' : 'bg-gray-600'}" style="width:${pctStr}%"></div>
+      </div>
+      <span class="w-10 text-right font-mono text-xs ${isChosen ? 'text-green-400' : 'text-gray-500'}">${pctStr}%</span>
+    </div>`;
+  }).join("");
+
+  // confidence
+  const conf = result.confidence;
+  document.getElementById("confValue").textContent = (conf*100).toFixed(1) + "%";
+  document.getElementById("confBar").style.width = (conf*100) + "%";
+  const confBar = document.getElementById("confBar");
+  confBar.className = `h-full prob-bar rounded-full ${conf > 0.7 ? 'bg-green-500' : conf > 0.4 ? 'bg-yellow-500' : 'bg-red-500'}`;
+
+  // state preview
+  document.getElementById("statePreview").textContent = result.gridPreview;
+
+  // history
+  const hist = document.getElementById("history");
+  const ts = new Date().toLocaleTimeString("en", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const entry = document.createElement("div");
+  entry.className = "flex items-center justify-between text-xs font-mono py-0.5 border-b border-gray-800";
+  entry.innerHTML = `<span class="text-gray-500">${ts}</span><span class="px-2 py-0.5 rounded ${MOVE_COLORS[result.move] || ''}">${DIR_ICONS[result.move]} ${result.move}</span><span class="text-gray-500">${(conf*100).toFixed(0)}%</span>`;
+  hist.prepend(entry);
+  while (hist.children.length > 50) hist.removeChild(hist.lastChild);
+}
+
+async function tick() {
+  if (gameOver) return;
+  const validMoves = getValidMoves();
+  if (validMoves.length === 0) { endGame(); return; }
+  const headPos = snake[0];
+  let applePos = null;
+  outer: for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (grid[r][c] === "A") { applePos = [r,c]; break outer; }
+  try {
+    const res = await fetch("/move", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ grid, validMoves, headPos, applePos }),
+    });
+    const result = await res.json();
+    if (result.error) { console.error(result.error); return; }
+    lastFullPrompt = result.fullPrompt || result.gridPreview;
+    updateJevPanel(result);
+    applyMove(result.move);
+    renderGrid();
+  } catch (e) {
+    console.error("fetch error", e);
+  }
+}
+
+function copyCurrentPrompt() {
+  if (!lastFullPrompt) return;
+  navigator.clipboard.writeText(lastFullPrompt).then(() => {
+    const btn = document.getElementById("copyCurrentBtn");
+    btn.textContent = "Copied!";
+    btn.classList.add("bg-green-800");
+    setTimeout(() => { btn.textContent = "Copy"; btn.classList.remove("bg-green-800"); }, 2000);
+  });
+}
+
+function copyLastPrompt() {
+  if (!lastFullPrompt) return;
+  navigator.clipboard.writeText(lastFullPrompt).then(() => {
+    const btn = document.getElementById("copyPromptBtn");
+    btn.textContent = "Copied!";
+    btn.classList.add("bg-green-800");
+    setTimeout(() => { btn.textContent = "Copy last prompt"; btn.classList.remove("bg-green-800"); }, 2000);
+  });
+}
+
+function resetGame() {
+  clearInterval(intervalId);
+  running = false;
+  document.getElementById("gameOver").classList.add("hidden");
+  document.getElementById("history").innerHTML = "";
+  initGrid();
+  buildGridEl();
+  renderGrid();
+  document.getElementById("startBtn").textContent = "Start";
+}
+
+document.getElementById("startBtn").addEventListener("click", () => {
+  if (gameOver) { resetGame(); return; }
+  if (running) {
+    clearInterval(intervalId);
+    running = false;
+    document.getElementById("startBtn").textContent = "Start";
+  } else {
+    const ms = parseInt(document.getElementById("speed").value);
+    intervalId = setInterval(tick, ms);
+    running = true;
+    document.getElementById("startBtn").textContent = "Pause";
+  }
+});
+
+document.getElementById("resetBtn").addEventListener("click", resetGame);
+
+document.getElementById("speed").addEventListener("input", (e) => {
+  const ms = parseInt(e.target.value);
+  document.getElementById("speedLabel").textContent = ms + "ms";
+  if (running) {
+    clearInterval(intervalId);
+    intervalId = setInterval(tick, ms);
+  }
+});
+
+// init
+initGrid();
+buildGridEl();
+renderGrid();
+</script>
+</body>
+</html>

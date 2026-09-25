@@ -1,0 +1,29 @@
+{
+  "name": "snev",
+  "version": "1.0.0",
+  "description": "JEV Games Platform — Snake & Sudoku",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "node --env-file=.env --watch server/index.js",
+    "dev:client": "vite",
+    "build": "vite build",
+    "start": "node --env-file=.env server/index.js"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "^0.6.0",
+    "vue": "^3.5.43",
+    "vue-router": "^5.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "autoprefixer": "^10.6.1",
+    "concurrently": "^10.0.5",
+    "postcss": "^8.5.28",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.3.1"
+  }
+}
